@@ -4,8 +4,7 @@
 #include <math.h>
 
 #include "portaudio.h"
-#include "delay.h"
-#include "gtable.h"
+#include "snd_def.h"
 
 #define FRAME_BLOCK_LEN 256
 #define SAMPLING_RATE 44100
@@ -14,14 +13,11 @@
 PaStream *audioStream;
 double si = 0;
 double freq = 0;
-DELAY *delay = NULL;
-
-GTABLE *gtable = NULL;
-OSCILT *osc = NULL;
-
-double blockbuffer[FRAME_BLOCK_LEN];
 
 
+float *buffer;
+int chans, bytes, cnt = 0; pt = 0; ts = 0;
+float sr, dur, dtime, *comp, *del, del1[2] = {0.f, 0.f}, del2[1] = {0.f}, del3[2] = {0.f, 0.f};
 
 int audio_callback( const void *inputBuffer, void *outputBuffer,
                     unsigned long framesPerBuffer,
@@ -32,19 +28,15 @@ int audio_callback( const void *inputBuffer, void *outputBuffer,
 {
     float *in = (float*) inputBuffer, *out = (float*)outputBuffer;
     int i;
-    // left first
-    // right second
-    delay_processblock(delay, in, out, framesPerBuffer, 2);
-/*
-    double f;
-    for( i=0; i < framesPerBuffer; i++ ) {
-        //*out++ = delay_processframe(delay, *in++);
-        //*out++ = delay_processframe(delay, *in++);
-        f = 
-        *out++ = delay_processframe(delay, f);
-        *out++ = delay_processframe(delay, f);
-    }*/
+    
+    // bara mono atm
+    memcpy(comp, in, bytes);
+    flanger(in, line(.0001f, dur, dtime, &ts, def_cr),
+        0.4f, dtime, del, &pt, framesPerBuffer, SAMPLING_RATE);
+    balance(in, comp, del1, freq, framesPerBuffer, SAMPLING_RATE);
+    memcpy(out, in, bytes);
 
+    
     return paContinue;
 }
 
@@ -59,24 +51,29 @@ void init_stuff()
     printf("Type the modulator frequency in Hertz: ");
     scanf("%f", &frequency);                        /* get the modulator frequency */
 
-    gtable = new_square(1024, 2);
-    osc = new_oscilt(SAMPLING_RATE, gtable, 0.0);
-
     si = TWO_PI * frequency / SAMPLING_RATE;       /* calculate sampling increment */
     
     freq = frequency;
 
-    
-    printf("Type the duration of the delay: ");
+    // vdtime
+    // maxdelay
+    // fbk
+    printf("Type the max delay time (s) of the delay: ");
+    scanf("%f", &dtime);                        /* get the modulator frequency */
+
+    printf("Type the env duration (s) for the delay: ");
     scanf("%f", &dur);                        /* get the modulator frequency */
-
-    printf("Type the gain for the delay: ");
-    scanf("%f", &dgain);                        /* get the modulator frequency */
     
-    printf("Type the feedback for the delay: ");
-    scanf("%f", &dfeedback);                        /* get the modulator frequency */
+    bytes = sizeof(float) * def_vsize * def_chans;
 
-    delay = new_delay(dur,SAMPLING_RATE, dgain, dfeedback);
+    buffer = (float*) malloc(bytes);
+    memset(buffer, 0, bytes);
+
+    comp = (float*) malloc(bytes);
+    memset(comp, 0, bytes);
+
+    del = (float*) malloc(sizeof(float)*((int)(dtime*def_sr)));
+    memset(del, 0, sizeof(float)*((int)(dtime*def_sr)));
 
     printf("Initializing Portaudio. Please wait...\n");
     Pa_Initialize();                                       /* initialize portaudio */
@@ -96,7 +93,7 @@ void init_stuff()
     printf("Opening AUDIO output device [%s] %s\n", hostapi->name, info->name);
 
     outputParameters.device = id;                             /* chosen device id */
-    outputParameters.channelCount = 2;                           /* stereo output */
+    outputParameters.channelCount = def_chans;                           /* stereo output */
     outputParameters.sampleFormat = paFloat32;    /* 32 bit floating point output */
     outputParameters.suggestedLatency = info->defaultLowOutputLatency;/* set default */
     outputParameters.hostApiSpecificStreamInfo = NULL;        /* no specific info */
@@ -116,7 +113,7 @@ void init_stuff()
     printf("Opening AUDIO input device [%s] %s\n", hostapi->name, info->name);
 
     inputParameters.device = id;                               /* chosen device id */
-    inputParameters.channelCount = 2;                              /* stereo input */
+    inputParameters.channelCount = def_chans;                              /* stereo input */
     inputParameters.sampleFormat = paFloat32;      /* 32 bit floating point output */
     inputParameters.suggestedLatency = info->defaultLowInputLatency; /*set default */
     inputParameters.hostApiSpecificStreamInfo = NULL;          /* no specific info */
@@ -141,8 +138,11 @@ void terminate_stuff()
     Pa_CloseStream( audioStream );   /* destroy the audio stream object */
     Pa_Terminate();                  /* terminate portaudio */
 
-    delay_free(&delay);
-    gtable_free(&gtable);
+    if(buffer) {
+        free(buffer);
+        free(comp);
+        free(del);
+    }
 }
 
 int main()

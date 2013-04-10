@@ -1,11 +1,7 @@
-
-#include <stdlib.h> 
 #include <stdio.h>
 #include <math.h>
 
 #include "portaudio.h"
-#include "delay.h"
-#include "gtable.h"
 
 #define FRAME_BLOCK_LEN 256
 #define SAMPLING_RATE 44100
@@ -13,15 +9,40 @@
 
 PaStream *audioStream;
 double si = 0;
-double freq = 0;
-DELAY *delay = NULL;
+double th = 1.0/3.0;
+double th2 = 2.0/3.0;
+double gain = 0.5;
 
-GTABLE *gtable = NULL;
-OSCILT *osc = NULL;
+void expdist(float *input, float *output, unsigned int N, float gain, float mix) {
+    unsigned int i;
+    for(i=0; i < N; i++) {
+        float q = input[i] * gain;
+        float z = 1-exp(-fabs(q));
 
-double blockbuffer[FRAME_BLOCK_LEN];
+        if(q < 0.0) z *= -1; 
 
+        output[i] = mix * z + (1.0 - mix)*input[i];
+    }
+}
 
+void overdrive(float *input, float *output, unsigned int N, float gain) {
+    unsigned int i;
+    for(i=0; i < N; i++) {
+        in[i] *= gain;
+        float xn_abs = fabs(in[i]);
+     
+        if (xn_abs < th) {
+            out[i] = 2.0 * in[i];
+        } 
+        else if (xn_abs <= 2th) {
+            if (in[i] > 0) { out[i] = (3.0 - pow((2.0 - in[i]  * 3.0), 2)) / 3.0; }
+            if (in[i] < 0) { out[i] =-(3.0 - pow((2.0 - xn_abs * 3.0), 2)) / 3.0; }
+        } else  { //if (xn_abs > 2th ) {
+            if (in[i] > 0.0) out[i] =  1.0;
+            if (in[i] < 0.0) out[i] = -1.0;
+        }
+    }
+}
 
 int audio_callback( const void *inputBuffer, void *outputBuffer,
                     unsigned long framesPerBuffer,
@@ -31,53 +52,27 @@ int audio_callback( const void *inputBuffer, void *outputBuffer,
                   )
 {
     float *in = (float*) inputBuffer, *out = (float*)outputBuffer;
-    int i;
-    // left first
-    // right second
-    delay_processblock(delay, in, out, framesPerBuffer, 2);
-/*
-    double f;
-    for( i=0; i < framesPerBuffer; i++ ) {
-        //*out++ = delay_processframe(delay, *in++);
-        //*out++ = delay_processframe(delay, *in++);
-        f = 
-        *out++ = delay_processframe(delay, f);
-        *out++ = delay_processframe(delay, f);
-    }*/
+    static double phase = 0;
+    unsigned long i;
 
+    // Passthrough
+    //for( i=0; i < framesPerBuffer; i++ ) {
+        //in[i] *= gain;
+        //*out++ = *in++ * gain;
+    //}
+    overdrive(in, out, framesPerBuffer, 0.85f);
+    
     return paContinue;
 }
 
 void init_stuff()
 {
-    float frequency, dgain, dfeedback, dur;
+    float frequency;
     int i,id;
     const PaDeviceInfo  *info;
     const PaHostApiInfo *hostapi;
     PaStreamParameters outputParameters, inputParameters;
     
-    printf("Type the modulator frequency in Hertz: ");
-    scanf("%f", &frequency);                        /* get the modulator frequency */
-
-    gtable = new_square(1024, 2);
-    osc = new_oscilt(SAMPLING_RATE, gtable, 0.0);
-
-    si = TWO_PI * frequency / SAMPLING_RATE;       /* calculate sampling increment */
-    
-    freq = frequency;
-
-    
-    printf("Type the duration of the delay: ");
-    scanf("%f", &dur);                        /* get the modulator frequency */
-
-    printf("Type the gain for the delay: ");
-    scanf("%f", &dgain);                        /* get the modulator frequency */
-    
-    printf("Type the feedback for the delay: ");
-    scanf("%f", &dfeedback);                        /* get the modulator frequency */
-
-    delay = new_delay(dur,SAMPLING_RATE, dgain, dfeedback);
-
     printf("Initializing Portaudio. Please wait...\n");
     Pa_Initialize();                                       /* initialize portaudio */
 
@@ -140,14 +135,11 @@ void terminate_stuff()
     Pa_StopStream( audioStream );    /* stop the callback mechanism */
     Pa_CloseStream( audioStream );   /* destroy the audio stream object */
     Pa_Terminate();                  /* terminate portaudio */
-
-    delay_free(&delay);
-    gtable_free(&gtable);
 }
 
 int main()
 {
-    int ch;
+  int ch;
     init_stuff();
     while(getchar() != ' ') Pa_Sleep(100);
     terminate_stuff();

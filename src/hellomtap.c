@@ -4,22 +4,19 @@
 #include <math.h>
 
 #include "portaudio.h"
-#include "delay.h"
-#include "gtable.h"
+#include "mtapdelay.h"
 
 #define FRAME_BLOCK_LEN 256
 #define SAMPLING_RATE 44100
 #define TWO_PI  (3.14159265f * 2.0f)
 
 PaStream *audioStream;
-double si = 0;
-double freq = 0;
-DELAY *delay = NULL;
 
-GTABLE *gtable = NULL;
-OSCILT *osc = NULL;
+MTAP *mtap;
 
-double blockbuffer[FRAME_BLOCK_LEN];
+long *tapindex;         // ntaps
+float *taptime;        // ntaps
+float *tapamp;         // ntaps
 
 
 
@@ -34,50 +31,47 @@ int audio_callback( const void *inputBuffer, void *outputBuffer,
     int i;
     // left first
     // right second
-    delay_processblock(delay, in, out, framesPerBuffer, 2);
-/*
-    double f;
-    for( i=0; i < framesPerBuffer; i++ ) {
-        //*out++ = delay_processframe(delay, *in++);
-        //*out++ = delay_processframe(delay, *in++);
-        f = 
-        *out++ = delay_processframe(delay, f);
-        *out++ = delay_processframe(delay, f);
-    }*/
+    mtap_process(mtap, in, out, framesPerBuffer, 1, 0.9, tapindex, taptime, tapamp);
 
     return paContinue;
 }
 
 void init_stuff()
 {
-    float frequency, dgain, dfeedback, dur;
+    float frequency, dgain, dfeedback, dur, ntaps;
+    double maxtime;
     int i,id;
     const PaDeviceInfo  *info;
     const PaHostApiInfo *hostapi;
     PaStreamParameters outputParameters, inputParameters;
     
-    printf("Type the modulator frequency in Hertz: ");
-    scanf("%f", &frequency);                        /* get the modulator frequency */
+    //printf("Type the modulator frequency in Hertz: ");
+    //scanf("%f", &frequency);                        /* get the modulator frequency */
+    printf("herp");
 
-    gtable = new_square(1024, 2);
-    osc = new_oscilt(SAMPLING_RATE, gtable, 0.0);
+    ntaps = 4;
+    maxtime = 2.0;
 
-    si = TWO_PI * frequency / SAMPLING_RATE;       /* calculate sampling increment */
+    printf("Allocating memory...\n");
+    tapindex = (long*)malloc(sizeof(long)*ntaps);
+    taptime = (float*)malloc(sizeof(float)*ntaps);
+    tapamp = (float*)malloc(sizeof(float)*ntaps);
     
-    freq = frequency;
+    printf("Setting up taps...\n");
+    taptime[0] = 0.3;
+    taptime[1] = 0.5;
+        taptime[2] = 1.2;
+    taptime[3] = 1.5;
 
-    
-    printf("Type the duration of the delay: ");
-    scanf("%f", &dur);                        /* get the modulator frequency */
+    tapamp[0] = 0.05;
+    tapamp[1] = 0.20;
+    tapamp[2] = 0.88;
+    tapamp[3] = 0.15;
 
-    printf("Type the gain for the delay: ");
-    scanf("%f", &dgain);                        /* get the modulator frequency */
-    
-    printf("Type the feedback for the delay: ");
-    scanf("%f", &dfeedback);                        /* get the modulator frequency */
+    printf("Creating mtap object...\n");
+    mtap = new_mtap(tapindex, ntaps, maxtime, taptime, tapamp);
 
-    delay = new_delay(dur,SAMPLING_RATE, dgain, dfeedback);
-
+    scanf("%f", &frequency);
     printf("Initializing Portaudio. Please wait...\n");
     Pa_Initialize();                                       /* initialize portaudio */
 
@@ -137,12 +131,14 @@ void init_stuff()
 
 void terminate_stuff()
 {
-    Pa_StopStream( audioStream );    /* stop the callback mechanism */
-    Pa_CloseStream( audioStream );   /* destroy the audio stream object */
+        Pa_StopStream( audioStream );    /* stop the callback mechanism */
+        Pa_CloseStream( audioStream );   /* destroy the audio stream object */
     Pa_Terminate();                  /* terminate portaudio */
+    
+    free(taptime);
+    free(tapamp);
 
-    delay_free(&delay);
-    gtable_free(&gtable);
+    mtap_free(mtap);
 }
 
 int main()

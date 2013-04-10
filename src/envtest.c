@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include "snd_def.h"
 
 /** simple synthesis program with envelopes
 		
@@ -12,13 +13,12 @@
 
 		envelope sndfile.wav amp freq(Hz) dur(secs)
 */
-int int main(int argc, char const *argv[])
+int main(int argc, char const *argv[])
 {
 	SNDFILE *psf;
 	float *buffer;
+	float dur, amp, freq, *wave, ndx;
 	int smps, cnt1=0, cnt2=0;
-
-	float dur, amp, freq *wave, ndx;
 
 	if(argc == 5) {
 		amp = (float)atof(argv[2]);
@@ -28,7 +28,7 @@ int int main(int argc, char const *argv[])
 
 		// allocate buffer & table memory
 		buffer = new float[def_vsize];
-		wave = sinus_table();
+		wave = sine_table();
 
 		// open the file
 		if(!(psf = soundout_open(argv[1]))) {
@@ -41,7 +41,7 @@ int int main(int argc, char const *argv[])
 				amp*adsr(1.f, dur, 0.05f, 0.1f, 0.7f, 0.2f, &cnt),
 				expon(freq, dur/2, freq*2, &cnt2),
 				wave, &ndx);
-			soundout(psf, buffer);
+			sound.out(psf, buffer);
 		}
 
 		// close

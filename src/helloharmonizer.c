@@ -4,8 +4,7 @@
 #include <math.h>
 
 #include "portaudio.h"
-#include "delay.h"
-#include "gtable.h"
+#include "snd_def.h"
 
 #define FRAME_BLOCK_LEN 256
 #define SAMPLING_RATE 44100
@@ -14,14 +13,9 @@
 PaStream *audioStream;
 double si = 0;
 double freq = 0;
-DELAY *delay = NULL;
 
-GTABLE *gtable = NULL;
-OSCILT *osc = NULL;
-
-double blockbuffer[FRAME_BLOCK_LEN];
-
-
+float gain, pitch, fdb, sr, *deray, *env, rp;
+int taps, wp, steps, dsize;
 
 int audio_callback( const void *inputBuffer, void *outputBuffer,
                     unsigned long framesPerBuffer,
@@ -30,21 +24,45 @@ int audio_callback( const void *inputBuffer, void *outputBuffer,
                     void *userData 
                   )
 {
+    // setup variables
     float *in = (float*) inputBuffer, *out = (float*)outputBuffer;
-    int i;
-    // left first
-    // right second
-    delay_processblock(delay, in, out, framesPerBuffer, 2);
-/*
-    double f;
-    for( i=0; i < framesPerBuffer; i++ ) {
-        //*out++ = delay_processframe(delay, *in++);
-        //*out++ = delay_processframe(delay, *in++);
-        f = 
-        *out++ = delay_processframe(delay, f);
-        *out++ = delay_processframe(delay, f);
-    }*/
+    int rpi, ep, i, j;
+    float s = 0.f, rpf, frac, next, p = pitch; //(pitch*1.5) + 0.5;
 
+    // processing loop
+    for( i = 0; i < framesPerBuffer; i++ ) {
+
+        // taps loop (taps = 2)
+        for( j = 0; j < taps; j++ ) {
+
+            // tap position, offset
+            rpf = rp + j * dsize / taps;
+            rpf = rpf < dsize ? rpf : rpf - dsize;
+            rpi = (int) rpf;
+            frac = rpf - rpi;
+            next = (rpi != dsize-1 ? deray[ rpi + 1 ] : deray[ 0 ] );
+
+            // envelope index
+            ep = rpi - wp;
+            if ( ep < 0 ) ep += dsize;
+            s += ( deray[ rpi ]  + frac * (next - deray[ rpi ] ) ) * env[ ep ];
+        }
+
+        // increment reader point and check bounds
+        rp += p;
+        rp = rp < dsize ? rp : rp - dsize;
+
+        // feed the delay line
+        deray[ wp ] = *in++ + s * fdb;
+
+        // output the signal
+        *out++ = ( deray[ wp - 1 ] * gain + ( s / taps ) * gain);
+        s = 0.f;
+
+        // increment the write pointer
+        wp = ( wp < dsize ? wp + 1 : 0 );
+    }
+   
     return paContinue;
 }
 
@@ -56,27 +74,39 @@ void init_stuff()
     const PaHostApiInfo *hostapi;
     PaStreamParameters outputParameters, inputParameters;
     
-    printf("Type the modulator frequency in Hertz: ");
-    scanf("%f", &frequency);                        /* get the modulator frequency */
-
-    gtable = new_square(1024, 2);
-    osc = new_oscilt(SAMPLING_RATE, gtable, 0.0);
-
     si = TWO_PI * frequency / SAMPLING_RATE;       /* calculate sampling increment */
     
-    freq = frequency;
+    // Input parameters
+    printf("Type the steps you wish to transpose (integer) of the delay: ");
+    scanf("%d", &steps);
 
+    pitch = pow(2, (float)steps/12.0);
+    printf("%f\n", pitch);
+
+    printf("Type the gain (0.0 -> 1.0) of the delay: ");
+    scanf("%f", &gain);
+
+    printf("Type the feedback (0.0 -> 1.0) of the delay: ");
+    scanf("%f", &fdb);
+
+    printf("Type the number of taps (integer, use 2) of the delay: ");
+    scanf("%d", &taps);
+
+    sr = SAMPLING_RATE;
+    dsize = (int)(0.045*sr);
     
-    printf("Type the duration of the delay: ");
-    scanf("%f", &dur);                        /* get the modulator frequency */
+    // allocate a 1-sec delay line and envelope
+    deray = (float*)malloc(sizeof(float)*SAMPLING_RATE);
+    memset(deray, 0, sizeof(float)*SAMPLING_RATE);
+    env = (float*)malloc(sizeof(float)*SAMPLING_RATE);
+    memset(env, 0, sizeof(float)*SAMPLING_RATE);
 
-    printf("Type the gain for the delay: ");
-    scanf("%f", &dgain);                        /* get the modulator frequency */
-    
-    printf("Type the feedback for the delay: ");
-    scanf("%f", &dfeedback);                        /* get the modulator frequency */
+    // write a triangluar env (ramp up, ramp down)
+    for( i = 0; i < dsize/2; i++) env[ i ] = i * 2. / dsize;
+    for( i = dsize/2; i >= 0; i--) env[ (int)dsize - i - 1 ] = i * 2./dsize;
 
-    delay = new_delay(dur,SAMPLING_RATE, dgain, dfeedback);
+    wp = 0;
+    rp = 0.0f;
 
     printf("Initializing Portaudio. Please wait...\n");
     Pa_Initialize();                                       /* initialize portaudio */
@@ -96,7 +126,7 @@ void init_stuff()
     printf("Opening AUDIO output device [%s] %s\n", hostapi->name, info->name);
 
     outputParameters.device = id;                             /* chosen device id */
-    outputParameters.channelCount = 2;                           /* stereo output */
+    outputParameters.channelCount = def_chans;                           /* stereo output */
     outputParameters.sampleFormat = paFloat32;    /* 32 bit floating point output */
     outputParameters.suggestedLatency = info->defaultLowOutputLatency;/* set default */
     outputParameters.hostApiSpecificStreamInfo = NULL;        /* no specific info */
@@ -116,7 +146,7 @@ void init_stuff()
     printf("Opening AUDIO input device [%s] %s\n", hostapi->name, info->name);
 
     inputParameters.device = id;                               /* chosen device id */
-    inputParameters.channelCount = 2;                              /* stereo input */
+    inputParameters.channelCount = def_chans;                              /* stereo input */
     inputParameters.sampleFormat = paFloat32;      /* 32 bit floating point output */
     inputParameters.suggestedLatency = info->defaultLowInputLatency; /*set default */
     inputParameters.hostApiSpecificStreamInfo = NULL;          /* no specific info */
@@ -141,8 +171,10 @@ void terminate_stuff()
     Pa_CloseStream( audioStream );   /* destroy the audio stream object */
     Pa_Terminate();                  /* terminate portaudio */
 
-    delay_free(&delay);
-    gtable_free(&gtable);
+    if(deray) {
+        free(deray);
+        free(env);
+    }
 }
 
 int main()
